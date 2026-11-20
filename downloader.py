@@ -609,6 +609,7 @@ class FitGirlDownloaderGUI:
         self.clipboard_watch_active = tk.BooleanVar(value=True)
         self.last_clipboard_val = ""
         self.selected_item_id = None
+        self.selected_item_ids = []
         self.auto_grab_active = False
 
         self._build_ui()
@@ -1030,8 +1031,8 @@ class FitGirlDownloaderGUI:
 
     def _build_context_menu(self):
         self.menu = tk.Menu(self.root, tearoff=0, bg="#2b2d42", fg="#edf2f4", activebackground="#45475a", activeforeground="#89b4fa")
-        self.menu.add_command(label="▶ Start / Resume This Part", command=self._action_start_single)
-        self.menu.add_command(label="⏸ Pause This Part", command=self._action_pause_single)
+        self.menu.add_command(label="▶ Start / Resume", command=self._action_start_single)
+        self.menu.add_command(label="⏸ Pause", command=self._action_pause_single)
         self.menu.add_command(label="🔄 Refresh / Update Expired Link", command=self._action_refresh_link)
         self.menu.add_command(label="🔁 Restart from 0%", command=self._action_restart_single)
         self.menu.add_separator()
@@ -1042,25 +1043,69 @@ class FitGirlDownloaderGUI:
         self.menu.add_command(label="❌ Delete File & Remove", command=self._action_delete_file_and_remove)
 
     def _show_context_menu(self, event):
-        row_id = self.tree.identify_row(event.y)
-        if row_id:
-            self.tree.selection_set(row_id)
-            self.selected_item_id = int(row_id)
-            self.menu.post(event.x_root, event.y_root)
+        clicked_row = self.tree.identify_row(event.y)
+        selected_rows = list(self.tree.selection())
+
+        if clicked_row:
+            if clicked_row not in selected_rows:
+                self.tree.selection_set(clicked_row)
+                selected_rows = [clicked_row]
+        elif not selected_rows:
+            return
+
+        self.selected_item_ids = []
+        for r in selected_rows:
+            try:
+                self.selected_item_ids.append(int(r))
+            except Exception:
+                pass
+
+        if not self.selected_item_ids:
+            return
+
+        self.selected_item_id = self.selected_item_ids[0]
+        count = len(self.selected_item_ids)
+
+        if count > 1:
+            self.menu.entryconfig(0, label=f"▶ Start / Resume Selected ({count} parts)")
+            self.menu.entryconfig(1, label=f"⏸ Pause Selected ({count} parts)")
+            self.menu.entryconfig(2, state="disabled")
+            self.menu.entryconfig(3, label=f"🔁 Restart Selected from 0% ({count} parts)")
+            self.menu.entryconfig(5, label=f"📋 Copy Links ({count} links)")
+            self.menu.entryconfig(6, state="disabled")
+            self.menu.entryconfig(8, label=f"🗑️ Remove Selected ({count} parts)")
+            self.menu.entryconfig(9, label=f"❌ Delete Files & Remove ({count} parts)")
+        else:
+            self.menu.entryconfig(0, label="▶ Start / Resume This Part")
+            self.menu.entryconfig(1, label="⏸ Pause This Part")
+            self.menu.entryconfig(2, state="normal")
+            self.menu.entryconfig(3, label="🔁 Restart from 0%")
+            self.menu.entryconfig(5, label="📋 Copy Link")
+            self.menu.entryconfig(6, state="normal")
+            self.menu.entryconfig(8, label="🗑️ Remove from Queue")
+            self.menu.entryconfig(9, label="❌ Delete File & Remove")
+
+        self.menu.post(event.x_root, event.y_root)
 
     def _action_start_single(self):
-        if self.selected_item_id:
-            self.manager.start_single_item(self.selected_item_id, self._on_item_update)
-            self.status_bar.config(text=f"Started download for part #{self.selected_item_id}")
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            for item_id in items:
+                self.manager.start_single_item(item_id, self._on_item_update)
+            self.status_bar.config(text=f"Started/Resumed {len(items)} selected part(s).")
 
     def _action_pause_single(self):
-        if self.selected_item_id:
-            self.manager.pause_single_item(self.selected_item_id, self._on_item_update)
-            self.status_bar.config(text=f"Paused part #{self.selected_item_id}")
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            for item_id in items:
+                self.manager.pause_single_item(item_id, self._on_item_update)
+            self.status_bar.config(text=f"Paused {len(items)} selected part(s).")
 
     def _action_refresh_link(self):
-        if self.selected_item_id:
-            item = self.manager.get_item(self.selected_item_id)
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            target_id = items[0]
+            item = self.manager.get_item(target_id)
             if item:
                 new_url = simpledialog.askstring(
                     "Refresh Expired Link",
@@ -1068,26 +1113,36 @@ class FitGirlDownloaderGUI:
                     parent=self.root
                 )
                 if new_url and new_url.strip().startswith("http"):
-                    self.manager.update_item_url(self.selected_item_id, new_url.strip(), self._on_item_update)
+                    self.manager.update_item_url(target_id, new_url.strip(), self._on_item_update)
                     self.status_bar.config(text=f"Updated link for {item.filename}. Resuming...")
 
     def _action_restart_single(self):
-        if self.selected_item_id:
-            if messagebox.askyesno("Restart Download", "Are you sure you want to delete downloaded progress and restart this part from 0%?"):
-                self.manager.restart_single_item(self.selected_item_id, self._on_item_update)
-                self.status_bar.config(text=f"Restarted part #{self.selected_item_id} from 0%")
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            msg = f"Are you sure you want to delete progress and restart {len(items)} selected part(s) from 0%?" if len(items) > 1 else "Are you sure you want to delete progress and restart this part from 0%?"
+            if messagebox.askyesno("Restart Download", msg):
+                for item_id in items:
+                    self.manager.restart_single_item(item_id, self._on_item_update)
+                self.status_bar.config(text=f"Restarted {len(items)} part(s) from 0%")
 
     def _action_copy_link(self):
-        if self.selected_item_id:
-            item = self.manager.get_item(self.selected_item_id)
-            if item:
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            urls = []
+            for item_id in items:
+                it = self.manager.get_item(item_id)
+                if it:
+                    urls.append(it.url)
+            if urls:
                 self.root.clipboard_clear()
-                self.root.clipboard_append(item.url)
-                self.status_bar.config(text=f"Copied link for part #{self.selected_item_id} to clipboard")
+                self.root.clipboard_append("\n".join(urls))
+                self.status_bar.config(text=f"Copied {len(urls)} link(s) to clipboard.")
 
     def _action_show_in_folder(self):
-        if self.selected_item_id:
-            item = self.manager.get_item(self.selected_item_id)
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            target_id = items[0]
+            item = self.manager.get_item(target_id)
             if item and os.path.exists(item.filepath):
                 if sys.platform == "darwin":
                     subprocess.Popen(["open", "-R", item.filepath])
@@ -1099,24 +1154,29 @@ class FitGirlDownloaderGUI:
                 self._open_dest_folder()
 
     def _action_remove_from_queue(self):
-        if self.selected_item_id:
-            iid_str = str(self.selected_item_id)
-            self.manager.remove_item(self.selected_item_id, delete_disk_file=False)
-            if self.tree.exists(iid_str):
-                self.tree.delete(iid_str)
-            self.status_bar.config(text=f"Removed part #{self.selected_item_id} from queue.")
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            for item_id in items:
+                iid_str = str(item_id)
+                self.manager.remove_item(item_id, delete_disk_file=False)
+                if self.tree.exists(iid_str):
+                    self.tree.delete(iid_str)
+            self.status_bar.config(text=f"Removed {len(items)} part(s) from queue.")
+            self.selected_item_ids = []
             self.selected_item_id = None
 
     def _action_delete_file_and_remove(self):
-        if self.selected_item_id:
-            item = self.manager.get_item(self.selected_item_id)
-            fname = item.filename if item else f"Part #{self.selected_item_id}"
-            if messagebox.askyesno("Delete File", f"Are you sure you want to permanently delete:\n\n{fname}\n\nand remove it from the queue?"):
-                iid_str = str(self.selected_item_id)
-                self.manager.remove_item(self.selected_item_id, delete_disk_file=True)
-                if self.tree.exists(iid_str):
-                    self.tree.delete(iid_str)
-                self.status_bar.config(text=f"Deleted file and removed part #{self.selected_item_id}.")
+        items = getattr(self, "selected_item_ids", []) or ([self.selected_item_id] if self.selected_item_id else [])
+        if items:
+            msg = f"Are you sure you want to permanently delete downloaded files on disk and remove {len(items)} selected part(s) from the queue?" if len(items) > 1 else f"Are you sure you want to permanently delete file on disk and remove part #{items[0]} from queue?"
+            if messagebox.askyesno("Delete File", msg):
+                for item_id in items:
+                    iid_str = str(item_id)
+                    self.manager.remove_item(item_id, delete_disk_file=True)
+                    if self.tree.exists(iid_str):
+                        self.tree.delete(iid_str)
+                self.status_bar.config(text=f"Deleted files and removed {len(items)} part(s).")
+                self.selected_item_ids = []
                 self.selected_item_id = None
 
     def _clean_queue(self):
