@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         FitGirl Auto-Clicker & Direct Bridge (FuckingFast + DataNodes)
 // @namespace    https://github.com/Gimhana2004/Fitgirl-Downloder
-// @version      7.0
-// @description  Automates FuckingFast & DataNodes downloads, extracts links from FitGirl pages, and transmits directly to FitGirl Downloader!
+// @version      7.5
+// @description  Automates FF & DataNodes downloads, detects dead links/404, and transmits directly to FitGirl Downloader!
 // @author       Gimhana
 // @match        *://*.fuckingfast.co/*
 // @match        *://fuckingfast.co/*
@@ -179,10 +179,49 @@
             return originalXhrOpen.apply(this, args);
         };
 
+        function reportDeadLink(reason) {
+            if (captured) return;
+            captured = true;
+            console.log('[FitGirl Auto] File Not Found on Server:', reason);
+            updateBanner('❌ FILE NOT FOUND / DELETED ON SERVER!', '#f38ba8');
+
+            let fname = 'unknown_part.rar';
+            if (window.location.hash) {
+                fname = decodeURIComponent(window.location.hash.substring(1));
+            }
+
+            const deadPayload = `DEAD_LINK:${window.location.href}:::${fname}`;
+            if (typeof GM_xmlhttpRequest !== 'undefined') {
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: 'http://127.0.0.1:18999',
+                    data: deadPayload,
+                    headers: { 'Content-Type': 'text/plain' }
+                });
+            }
+
+            setTimeout(() => {
+                try { window.close(); } catch(e) {}
+            }, 2500);
+        }
+
         function resolveFuckingFastPage() {
             if (captured) return;
             getOrCreateBanner();
-            updateBanner('⚡ FuckingFast: Resolving Direct Link...', '#89b4fa');
+
+            // Check if page displays File Not Found or Deleted
+            const pageText = (document.body ? document.body.innerText : '').toLowerCase();
+            if (pageText.includes('file not found') ||
+                pageText.includes('file has been removed') ||
+                pageText.includes('file does not exist') ||
+                pageText.includes('404 not found') ||
+                pageText.includes('deleted due to copyright') ||
+                pageText.includes('file was deleted')) {
+                reportDeadLink('Page text indicates file deleted/not found');
+                return;
+            }
+
+            updateBanner('⚡ F-Fast: Resolving Direct Link...', '#89b4fa');
 
             const pathParts = window.location.pathname.split('/').filter(Boolean);
             const fileId = pathParts[pathParts.length - 1];
@@ -199,6 +238,10 @@
                     },
                     body: ''
                 }).then(resp => {
+                    if (resp.status === 404) {
+                        reportDeadLink('Server returned HTTP 404');
+                        return;
+                    }
                     const redir = resp.headers.get('hx-redirect') || resp.headers.get('hx-location');
                     if (redir) {
                         handleFuckingFastDirect(redir);
@@ -223,6 +266,16 @@
                             trigger.click();
                         }
                     }, 500);
+                } else {
+                    // If no trigger after 3s, check if page says not found
+                    setTimeout(() => {
+                        if (!captured) {
+                            const lateText = (document.body ? document.body.innerText : '').toLowerCase();
+                            if (lateText.includes('not found') || lateText.includes('error') || lateText.includes('deleted')) {
+                                reportDeadLink('No download button found');
+                            }
+                        }
+                    }, 2000);
                 }
             }, 700);
         }
@@ -262,6 +315,24 @@
         let step1Submitted = false;
         const mainInterval = setInterval(() => {
             getOrCreateBanner();
+
+            const bodyText = (document.body ? document.body.innerText : '').toLowerCase();
+            if (bodyText.includes('file not found') || bodyText.includes('file was deleted') || bodyText.includes('file has been removed')) {
+                clearInterval(mainInterval);
+                updateBanner('❌ FILE NOT FOUND / DELETED ON SERVER!', '#f38ba8');
+                let fname = window.location.pathname.split('/').filter(Boolean).pop() || 'unknown_part.rar';
+                const deadPayload = `DEAD_LINK:${window.location.href}:::${fname}`;
+                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                    GM_xmlhttpRequest({
+                        method: 'POST',
+                        url: 'http://127.0.0.1:18999',
+                        data: deadPayload,
+                        headers: { 'Content-Type': 'text/plain' }
+                    });
+                }
+                setTimeout(() => { try { window.close(); } catch(e) {} }, 2500);
+                return;
+            }
 
             // Step 1: Wait for scan and click Free Download >>
             const form = document.getElementById('downloadForm');

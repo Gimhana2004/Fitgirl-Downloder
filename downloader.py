@@ -264,7 +264,7 @@ class DownloadManager:
         self.save_state()
         self.start_single_item(item_id, on_update_callback)
 
-    def start_next_downloads(self, on_update_callback):
+    def resume_all(self, on_update_callback):
         self.is_running = True
         with self.lock:
             for item in self.items:
@@ -273,7 +273,13 @@ class DownloadManager:
                     item.stop_requested = False
                     if on_update_callback:
                         on_update_callback(item)
+        self.start_next_downloads(on_update_callback)
 
+    def start_next_downloads(self, on_update_callback):
+        if not self.is_running:
+            return
+
+        with self.lock:
             active_count = len(self.active_threads)
             if active_count >= self.max_concurrent:
                 return
@@ -293,9 +299,10 @@ class DownloadManager:
                         break
 
     def retry_failed(self, on_update_callback):
+        self.is_running = True
         with self.lock:
             for item in self.items:
-                if item.status.startswith("Failed") or item.status == "Paused":
+                if item.status.startswith("Failed") or "Not Found" in item.status or item.status == "Paused":
                     item.status = "Queued"
                     item.retries = 0
                     item.stop_requested = False
@@ -398,8 +405,15 @@ class DownloadManager:
 
                     content_type = response.headers.get("Content-Type", "").lower()
                     if "text/html" in content_type and not item.url.endswith(".html"):
-                        item.status = "Failed (Webpage URL, not direct file)"
-                        item.error_msg = "Received HTML page. This is a webpage link, not a direct file link."
+                        first_chunk = response.read(2048).decode("utf-8", errors="ignore").lower()
+                        if any(phrase in first_chunk for phrase in ["not found", "deleted", "removed", "does not exist", "404"]):
+                            item.status = "❌ File Not Found (Deleted)"
+                            item.error_msg = "Server reported: File Not Found or Deleted."
+                        else:
+                            item.status = "Failed (Webpage URL, not direct file)"
+                            item.error_msg = "Received HTML page. This is a webpage link, not a direct file link."
+                        item.speed = 0
+                        item.eta = 0
                         if on_update:
                             on_update(item)
                         break
@@ -475,7 +489,13 @@ class DownloadManager:
 
             except urllib.error.HTTPError as e:
                 item.current_response = None
-                if e.code in (401, 403, 404, 410):
+                if e.code == 404:
+                    item.status = "❌ File Not Found (Deleted)"
+                    item.error_msg = f"HTTP 404: File not found or removed on server."
+                    item.speed = 0
+                    item.eta = 0
+                    break
+                elif e.code in (401, 403, 410):
                     item.status = "Failed (Link Expired - Right Click to Refresh)"
                     item.error_msg = f"HTTP {e.code}: Direct link expired. Right-click and choose 'Refresh / Update Link'."
                     item.speed = 0
@@ -608,8 +628,50 @@ class FitGirlDownloaderGUI:
         except Exception as e:
             print("Local bridge listener status:", e)
 
-    def handle_bridge_url(self, url):
-        self.root.after(0, self._add_single_url_from_bridge, url)
+    def handle_bridge_url(self, payload):
+        self.root.after(0, self._process_bridge_payload, payload)
+
+    def _process_bridge_payload(self, payload):
+        if payload.startswith("DEAD_LINK:"):
+            data = payload[len("DEAD_LINK:"):].strip()
+            parts = data.split(":::")
+            dead_url = parts[0].strip()
+            dead_filename = parts[1].strip() if len(parts) > 1 else os.path.basename(dead_url)
+
+            dest_dir = self.dest_dir_var.get()
+            item = self.manager.add_url(dead_url, dest_dir)
+            if dead_filename and dead_filename != "unknown_part.rar":
+                item.filename = dead_filename
+                item.filepath = os.path.join(dest_dir, dead_filename)
+            item.status = "❌ File Not Found (Deleted)"
+            item.error_msg = "The file is missing or deleted on the file hoster."
+
+            item_id_str = str(item.item_id)
+            if not self.tree.exists(item_id_str):
+                self.tree.insert(
+                    "",
+                    tk.END,
+                    iid=item_id_str,
+                    values=(
+                        item.item_id,
+                        item.filename,
+                        "-",
+                        "0%",
+                        "-",
+                        "--:--",
+                        item.status
+                    ),
+                    tags=("file_not_found",)
+                )
+            else:
+                self._sync_tree_item(item)
+
+            self.status_bar.config(text=f"❌ Dead Link: {item.filename[:45]}")
+            if getattr(self, "auto_grab_active", False):
+                self.root.after(2500, self._open_next_auto_link)
+            return
+
+        self._add_single_url_from_bridge(payload)
 
     def _add_single_url_from_bridge(self, url):
         # ONLY accept real direct download URLs into the queue!
@@ -630,7 +692,8 @@ class FitGirlDownloaderGUI:
                         "-",
                         "--:--",
                         item.status
-                    )
+                    ),
+                    tags=("queued",)
                 )
                 self.status_bar.config(
                     text=f"🚀 Direct file received: {item.filename[:45]}"
@@ -655,6 +718,16 @@ class FitGirlDownloaderGUI:
                 else format_size(item.downloaded_size)
             )
 
+            tag = "queued"
+            if "File Not Found" in item.status or "404" in item.status:
+                tag = "file_not_found"
+            elif "Failed" in item.status:
+                tag = "failed"
+            elif item.status == "Completed":
+                tag = "completed"
+            elif item.status == "Paused":
+                tag = "paused"
+
             self.tree.insert(
                 "",
                 tk.END,
@@ -667,7 +740,8 @@ class FitGirlDownloaderGUI:
                     "-",
                     "--:--",
                     item.status
-                )
+                ),
+                tags=(tag,)
             )
 
         if self.manager.items:
@@ -839,10 +913,10 @@ class FitGirlDownloaderGUI:
 
         tk.Label(
             ctrl_frame,
-            text="Concurrent:",
-            font=("Helvetica", 9),
+            text="⚡ Simultaneous Downloads (Default 2):",
+            font=("Helvetica", 9, "bold"),
             bg=self.bg_card,
-            fg=self.fg_sub
+            fg=self.accent_blue
         ).pack(side=tk.RIGHT, padx=(10, 4))
 
         spin_concurrent = tk.Spinbox(
@@ -926,6 +1000,13 @@ class FitGirlDownloaderGUI:
 
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.tag_configure("file_not_found", foreground="#f38ba8")
+        self.tree.tag_configure("failed", foreground="#f38ba8")
+        self.tree.tag_configure("completed", foreground="#a6e3a1")
+        self.tree.tag_configure("downloading", foreground="#89b4fa")
+        self.tree.tag_configure("paused", foreground="#f9e2af")
+        self.tree.tag_configure("queued", foreground="#cdd6f4")
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1113,11 +1194,11 @@ class FitGirlDownloaderGUI:
 
     def _start_downloading(self):
         if not self.manager.items:
-            messagebox.showinfo("Queue Empty", "No direct downloads in queue. Paste DataNodes links above and click 'Start 1-by-1 Auto-Grab'!")
+            messagebox.showinfo("Queue Empty", "No direct downloads in queue. Paste links above and click 'Start 1-by-1 Auto-Grab'!")
             return
 
-        self.status_bar.config(text="Downloading in progress...")
-        self.manager.start_next_downloads(self._on_item_update)
+        self.status_bar.config(text=f"Downloading in progress (Max {self.manager.max_concurrent} simultaneous downloads)...")
+        self.manager.resume_all(self._on_item_update)
 
     def _retry_failed(self):
         self.status_bar.config(text="Retrying all failed files...")
@@ -1147,6 +1228,18 @@ class FitGirlDownloaderGUI:
         speed_str = format_speed(item.speed) if item.speed > 0 else "-"
         eta_str = format_time(item.eta) if item.eta > 0 else "--:--"
 
+        tag = "queued"
+        if "File Not Found" in item.status or "404" in item.status:
+            tag = "file_not_found"
+        elif "Failed" in item.status:
+            tag = "failed"
+        elif item.status == "Completed":
+            tag = "completed"
+        elif item.status == "Downloading":
+            tag = "downloading"
+        elif item.status == "Paused":
+            tag = "paused"
+
         self.tree.item(
             item_id_str,
             values=(
@@ -1157,7 +1250,8 @@ class FitGirlDownloaderGUI:
                 speed_str,
                 eta_str,
                 item.status
-            )
+            ),
+            tags=(tag,)
         )
 
     def _start_clipboard_watcher(self):
