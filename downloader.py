@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FitGirl Multi-Part Downloader v3.5
+FitGirl Multi-Part Downloader v4.0 (FuckingFast & DataNodes Ultra)
 Features:
 - 1-by-1 Sequential Auto-Grab: Resolves links one at a time in the foreground so Cloudflare
   Turnstile never fails on background tabs! Auto-advances through the whole link list.
@@ -69,11 +69,15 @@ def format_time(seconds):
 def is_direct_download_url(url):
     """
     Returns True ONLY if URL is an actual downloadable file URL.
-    Returns False if it's a filehoster webpage (like datanodes.to/code/filename.rar).
+    Returns False if it's a filehoster webpage (like datanodes.to/... or fuckingfast.co/...).
     """
     u = url.strip().lower()
     if "datanodes.to/" in u:
         if "/d/" in u or "/download/" in u or "sig=" in u:
+            return True
+        return False
+    if "fuckingfast.co/" in u:
+        if "dl.fuckingfast.co" in u or "/download" in u or "/dl/" in u:
             return True
         return False
     return True
@@ -98,6 +102,11 @@ class DownloadItem:
         self.current_response = None
 
     def _guess_filename(self, url):
+        parsed = urllib.parse.urlparse(url)
+        if parsed.fragment:
+            clean_frag = urllib.parse.unquote(parsed.fragment)
+            if any(clean_frag.lower().endswith(ext) for ext in [".rar", ".zip", ".7z", ".bin", ".iso", ".exe", ".001", ".002", ".003", ".004", ".005", ".doi"]):
+                return os.path.basename(clean_frag)
         clean_url = url.split("?")[0].split("#")[0]
         name = os.path.basename(clean_url)
         if not name or len(name) > 150 or "." not in name:
@@ -376,7 +385,10 @@ class DownloadManager:
 
                 req = urllib.request.Request(item.url)
                 req.add_header("User-Agent", DEFAULT_USER_AGENT)
-                req.add_header("Referer", item.url)
+                if "fuckingfast.co" in item.url:
+                    req.add_header("Referer", "https://fuckingfast.co/")
+                else:
+                    req.add_header("Referer", item.url)
 
                 if existing_bytes > 0:
                     req.add_header("Range", f"bytes={existing_bytes}-")
@@ -549,7 +561,7 @@ class LocalBridgeHandler(http.server.BaseHTTPRequestHandler):
 class FitGirlDownloaderGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("FitGirl Multi-Part Downloader v3.5 (1-by-1 Cloudflare Safe Auto-Grab)")
+        self.root.title("FitGirl Multi-Part Downloader v4.0 (FuckingFast & DataNodes Ultra) (1-by-1 Cloudflare Safe Auto-Grab)")
         self.root.geometry("940x670")
         self.root.minsize(860, 520)
 
@@ -739,7 +751,7 @@ class FitGirlDownloaderGUI:
 
         lbl_input = tk.Label(
             input_frame,
-            text="FitGirl Page Links (Paste all DataNodes links here -> click 'Start 1-by-1 Auto-Grab'):",
+            text="FitGirl Page Links (Paste FuckingFast or DataNodes links here -> click 'Start 1-by-1 Auto-Grab'):",
             font=("Helvetica", 10, "bold"),
             bg=self.bg_card,
             fg=self.fg_text
