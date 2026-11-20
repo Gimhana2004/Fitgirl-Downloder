@@ -349,11 +349,17 @@ class DownloadManager:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            seen_ids = set()
+            self.items = []
             for d in data:
                 url = d.get("url", "")
+                item_id = d.get("item_id")
+                if not item_id or item_id in seen_ids:
+                    continue
                 if not is_direct_download_url(url):
                     continue
 
+                seen_ids.add(item_id)
                 actual_bytes = 0
                 fpath = d.get("filepath", "")
                 if os.path.exists(fpath):
@@ -367,7 +373,7 @@ class DownloadManager:
                     status = "Paused"
 
                 item = DownloadItem(
-                    item_id=d["item_id"],
+                    item_id=item_id,
                     url=url,
                     destination_folder=d.get("destination_folder", ""),
                     filename=d.get("filename"),
@@ -709,6 +715,8 @@ class FitGirlDownloaderGUI:
         self.manager.load_state()
         for item in self.manager.items:
             item_id_str = str(item.item_id)
+            if self.tree.exists(item_id_str):
+                continue
             prog_pct = 0
             if item.total_size > 0:
                 prog_pct = int((item.downloaded_size / item.total_size) * 100)
