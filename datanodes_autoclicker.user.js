@@ -1,44 +1,76 @@
 // ==UserScript==
 // @name         DataNodes Auto-Clicker & Direct Bridge for FitGirl
 // @namespace    https://github.com/fitgirl-downloader
-// @version      5.0
-// @description  Automates DataNodes Step 1 & Step 2, and transmits direct links directly to FitGirl Downloader via local bridge (Works on Safari & Chrome)!
+// @version      6.0
+// @description  Automates DataNodes Step 1 & Step 2, bypasses Mixed-Content & CORS using GM_xmlhttpRequest, and auto-copies via GM_setClipboard!
 // @author       Antigravity
 // @match        *://*.datanodes.to/*
 // @match        *://datanodes.to/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setClipboard
+// @grant        window.close
 // @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    console.log('[DataNodes Auto v5.0] Running on Safari / Chrome');
+    console.log('[DataNodes Auto v6.0] Running on:', window.location.href);
 
-    // 1. Send direct URL to our Python Downloader via local bridge
-    function sendToDownloader(directUrl) {
-        // Send via local HTTP server on port 18999
-        fetch('http://127.0.0.1:18999', {
-            method: 'POST',
-            mode: 'cors',
-            headers: { 'Content-Type': 'text/plain' },
-            body: directUrl
-        }).then(() => {
-            console.log('[DataNodes Auto] Successfully sent to FitGirl Downloader!');
-            updateBanner('🚀 SENT TO FITGIRL DOWNLOADER! Starting Download...', '#a6e3a1');
-        }).catch(err => {
-            console.warn('[DataNodes Auto] Bridge send error:', err);
-        });
+    // 1. Dual-Channel Link Transmitter (GM_xmlhttpRequest + GM_setClipboard)
+    function transmitDirectLink(directUrl) {
+        console.log('[DataNodes Auto] Transmitting direct URL:', directUrl);
 
-        // Also attempt clipboard copy
+        // Channel A: OS Clipboard (Extension Privileges - Never blocked by Chrome/Safari!)
         try {
-            if (navigator.clipboard) {
+            if (typeof GM_setClipboard !== 'undefined') {
+                GM_setClipboard(directUrl, 'text');
+                console.log('[DataNodes Auto] Copied to clipboard via GM_setClipboard');
+            } else if (navigator.clipboard) {
                 navigator.clipboard.writeText(directUrl);
             }
-        } catch (e) {}
+        } catch (e) {
+            console.warn('[DataNodes Auto] Clipboard write warning:', e);
+        }
+
+        // Channel B: Local HTTP Bridge on Port 18999 (GM_xmlhttpRequest bypasses Mixed Content & CORS!)
+        try {
+            if (typeof GM_xmlhttpRequest !== 'undefined') {
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: 'http://127.0.0.1:18999',
+                    data: directUrl,
+                    headers: { 'Content-Type': 'text/plain' },
+                    onload: function(resp) {
+                        console.log('[DataNodes Auto] Local bridge received link successfully! Response:', resp.responseText);
+                        updateBanner('🚀 SENT TO FITGIRL DOWNLOADER! Closing Tab...', '#a6e3a1');
+                    },
+                    onerror: function(err) {
+                        console.warn('[DataNodes Auto] GM_xmlhttpRequest error (Tool might be on different port):', err);
+                    }
+                });
+            } else {
+                // Fallback standard fetch
+                fetch('http://127.0.0.1:18999', {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: directUrl
+                }).catch(() => {});
+            }
+        } catch (e) {
+            console.warn('[DataNodes Auto] Bridge transmit error:', e);
+        }
+
+        // Auto-close tab after 2.5 seconds to keep browser clean
+        setTimeout(() => {
+            try {
+                window.close();
+            } catch(e) {}
+        }, 2500);
     }
 
-    // 2. Intercept fetch at document-start before DataNodes scripts run
+    // 2. Intercept fetch at document-start before DataNodes scripts mount
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         const response = await originalFetch.apply(this, args);
@@ -49,12 +81,8 @@
                     const directUrl = decodeURIComponent(data.url);
                     console.log('[DataNodes Auto] >>> CAPTURED DIRECT URL:', directUrl);
 
-                    sendToDownloader(directUrl);
-
-                    // Auto-close tab after 2.5 seconds so you don't have open tabs
-                    setTimeout(() => {
-                        window.close();
-                    }, 2500);
+                    updateBanner('✅ Direct Link Captured! Sending...', '#a6e3a1');
+                    transmitDirectLink(directUrl);
                 }
             }).catch(() => {});
         } catch (e) {}

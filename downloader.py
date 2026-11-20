@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-FitGirl Multi-Part Downloader v3.0 (Clean Smart Queue & Multi-Day Persistence)
+FitGirl Multi-Part Downloader v3.5
 Features:
+- 1-by-1 Sequential Auto-Grab: Resolves links one at a time in the foreground so Cloudflare
+  Turnstile never fails on background tabs! Auto-advances through the whole link list.
+- Dual-Channel Bridge: Receives direct URLs via GM_xmlhttpRequest on localhost:18999
+  AND auto-catches via GM_setClipboard.
 - Smart URL Filter: Distinguishes filehoster webpages from real direct download links.
-  (Never pollutes the download queue with fake/dummy webpage links!)
 - Persistent Sessions: Auto-saves queue to downloads_state.json across PC restarts.
 - Multi-Day Resume: Seamless HTTP Range resume from exact byte.
-- "Refresh Expired Link": Update links for parts that expired after 24h.
+- "Refresh Expired Link": Update links for parts that expired after 24h without lost bytes.
 - Right-click per-part controls: Start, Pause, Refresh Link, Restart, Delete.
-- Built-in Local Bridge: Seamless sync with Safari/Chrome auto-clickers.
-- "Clear Completed / Invalid" button to keep queue spotless.
 """
 
 import os
@@ -71,12 +72,10 @@ def is_direct_download_url(url):
     Returns False if it's a filehoster webpage (like datanodes.to/code/filename.rar).
     """
     u = url.strip().lower()
-    # DataNodes webpage links look like: https://datanodes.to/xyz/part01.rar
-    # Direct CDN links look like: https://tunnel5.dlproxy.uk/download/... or https://datanodes.to/d/...
     if "datanodes.to/" in u:
         if "/d/" in u or "/download/" in u or "sig=" in u:
             return True
-        return False  # It's a webpage!
+        return False
     return True
 
 
@@ -306,7 +305,6 @@ class DownloadManager:
         self.save_state()
 
     def clear_completed_or_invalid(self):
-        """Removes completed items and invalid webpage links from the queue."""
         with self.lock:
             kept = []
             for item in self.items:
@@ -321,7 +319,6 @@ class DownloadManager:
 
     def save_state(self):
         try:
-            # Only save valid direct download items
             data = [item.to_dict() for item in self.items if is_direct_download_url(item.url)]
             with open(STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -530,6 +527,7 @@ class LocalBridgeHandler(http.server.BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
             self.wfile.write(b'OK')
@@ -541,6 +539,7 @@ class LocalBridgeHandler(http.server.BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.end_headers()
 
     def log_message(self, format, *args):
@@ -550,7 +549,7 @@ class LocalBridgeHandler(http.server.BaseHTTPRequestHandler):
 class FitGirlDownloaderGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("FitGirl Multi-Part Downloader v3.0")
+        self.root.title("FitGirl Multi-Part Downloader v3.5 (1-by-1 Cloudflare Safe Auto-Grab)")
         self.root.geometry("940x670")
         self.root.minsize(860, 520)
 
@@ -578,6 +577,7 @@ class FitGirlDownloaderGUI:
         self.clipboard_watch_active = tk.BooleanVar(value=True)
         self.last_clipboard_val = ""
         self.selected_item_id = None
+        self.auto_grab_active = False
 
         self._build_ui()
         self._build_context_menu()
@@ -621,9 +621,13 @@ class FitGirlDownloaderGUI:
                     )
                 )
                 self.status_bar.config(
-                    text=f"🚀 Direct file received from Safari: {item.filename[:45]}"
+                    text=f"🚀 Direct file received: {item.filename[:45]}"
                 )
                 self.manager.start_next_downloads(self._on_item_update)
+
+            # If 1-by-1 auto-grab is running, automatically trigger the next link after 3s
+            if getattr(self, "auto_grab_active", False):
+                self.root.after(3000, self._open_next_auto_link)
 
     def _load_saved_session(self):
         self.manager.load_state()
@@ -679,7 +683,7 @@ class FitGirlDownloaderGUI:
 
         sub_lbl = tk.Label(
             header,
-            text="Smart Queue | Auto-Filter Webpages | Multi-Day Resume",
+            text="1-by-1 Cloudflare Safe Auto-Grab | Multi-Day Resume",
             font=("Helvetica", 9),
             bg=self.bg_dark,
             fg=self.accent_green
@@ -735,7 +739,7 @@ class FitGirlDownloaderGUI:
 
         lbl_input = tk.Label(
             input_frame,
-            text="FitGirl Page Links (Paste here -> click 'Auto-Open in Browser' to resolve):",
+            text="FitGirl Page Links (Paste all DataNodes links here -> click 'Start 1-by-1 Auto-Grab'):",
             font=("Helvetica", 10, "bold"),
             bg=self.bg_card,
             fg=self.fg_text
@@ -756,18 +760,18 @@ class FitGirlDownloaderGUI:
         ctrl_frame = tk.Frame(input_frame, bg=self.bg_card)
         ctrl_frame.pack(fill=tk.X)
 
-        open_browser_btn = tk.Button(
+        self.auto_grab_btn = tk.Button(
             ctrl_frame,
-            text="🌐 Auto-Open in Browser (Auto-Resolve)",
+            text="🌐 Start 1-by-1 Auto-Grab",
             font=("Helvetica", 10, "bold"),
             bg=self.accent_purple,
             fg="#11111b",
             padx=12,
             pady=5,
             relief=tk.FLAT,
-            command=self._batch_open_browser
+            command=self._toggle_auto_grab
         )
-        open_browser_btn.pack(side=tk.LEFT)
+        self.auto_grab_btn.pack(side=tk.LEFT)
 
         start_btn = tk.Button(
             ctrl_frame,
@@ -921,7 +925,7 @@ class FitGirlDownloaderGUI:
 
         self.status_bar = tk.Label(
             self.root,
-            text="Ready. Webpage links go to the text box; only real direct download files enter the queue.",
+            text="Ready. Paste your DataNodes links above and click 'Start 1-by-1 Auto-Grab' to resolve cleanly.",
             bg="#11111b",
             fg=self.fg_sub,
             font=("Helvetica", 9),
@@ -1029,35 +1033,49 @@ class FitGirlDownloaderGUI:
         self._load_saved_session()
         self.status_bar.config(text="Cleaned completed and invalid webpage links from queue.")
 
-    def _batch_open_browser(self):
+    def _toggle_auto_grab(self):
+        if getattr(self, "auto_grab_active", False):
+            self.auto_grab_active = False
+            self.auto_grab_btn.config(text="🌐 Start 1-by-1 Auto-Grab", bg=self.accent_purple)
+            self.status_bar.config(text="Auto-grab stopped.")
+            return
+
         raw_text = self.txt_links.get("1.0", tk.END).strip()
         urls = [line.strip() for line in raw_text.splitlines() if line.strip().startswith("http")]
-
         if not urls:
             messagebox.showinfo(
-                "No Links in Box",
-                "Please paste your FitGirl DataNodes links into the text box above first!"
+                "No Links",
+                "Please paste your FitGirl DataNodes links into the text box first!"
             )
             return
 
-        batch_size = min(len(urls), 5)
-        batch = urls[:batch_size]
+        self.auto_grab_active = True
+        self.auto_grab_btn.config(text="⏹ Stop Auto-Grab", bg=self.accent_red)
+        self._open_next_auto_link()
 
-        remaining = urls[batch_size:]
+    def _open_next_auto_link(self):
+        if not getattr(self, "auto_grab_active", False):
+            return
+
+        raw_text = self.txt_links.get("1.0", tk.END).strip()
+        urls = [line.strip() for line in raw_text.splitlines() if line.strip().startswith("http")]
+        if not urls:
+            self.auto_grab_active = False
+            self.auto_grab_btn.config(text="🌐 Start 1-by-1 Auto-Grab", bg=self.accent_purple)
+            self.status_bar.config(text="🎉 All links successfully resolved and queued for download!")
+            return
+
+        next_url = urls[0]
+        remaining = urls[1:]
+
         self.txt_links.delete("1.0", tk.END)
         if remaining:
             self.txt_links.insert(tk.END, "\n".join(remaining))
 
         self.status_bar.config(
-            text=f"Opening {len(batch)} links in browser tabs. Auto-Clicker will resolve them!"
+            text=f"🌐 Resolving {os.path.basename(next_url)[:35]}... (Active tab ensures Cloudflare passes cleanly)"
         )
-
-        def opener():
-            for u in batch:
-                webbrowser.open_new_tab(u)
-                time.sleep(1.2)
-
-        threading.Thread(target=opener, daemon=True).start()
+        webbrowser.open(next_url)
 
     def _open_dest_folder(self):
         folder = self.dest_dir_var.get()
@@ -1082,22 +1100,8 @@ class FitGirlDownloaderGUI:
             pass
 
     def _start_downloading(self):
-        # Check if text box has links
-        raw_text = self.txt_links.get("1.0", tk.END).strip()
-        if raw_text:
-            lines = [l.strip() for l in raw_text.splitlines() if l.strip().startswith("http")]
-            has_webpages = any(not is_direct_download_url(u) for u in lines)
-            if has_webpages:
-                if messagebox.askyesno(
-                    "Open in Browser?",
-                    "The links in the text box are DataNodes webpage links (not direct files).\n\n"
-                    "Would you like to open them in your browser now so the Auto-Clicker grabs the real direct links?"
-                ):
-                    self._batch_open_browser()
-                    return
-
         if not self.manager.items:
-            messagebox.showinfo("Queue Empty", "No direct downloads in queue. Please open FitGirl links via browser first!")
+            messagebox.showinfo("Queue Empty", "No direct downloads in queue. Paste DataNodes links above and click 'Start 1-by-1 Auto-Grab'!")
             return
 
         self.status_bar.config(text="Downloading in progress...")
@@ -1152,7 +1156,6 @@ class FitGirlDownloaderGUI:
                     if clip and clip != self.last_clipboard_val:
                         self.last_clipboard_val = clip
                         if clip.startswith("http://") or clip.startswith("https://"):
-                            # If it's a direct file download link
                             if is_direct_download_url(clip):
                                 if any(x in clip.lower() for x in [".rar", "/d/", "download", "fitgirl", "proxy", "tunnel"]):
                                     dest_dir = self.dest_dir_var.get()
@@ -1174,16 +1177,18 @@ class FitGirlDownloaderGUI:
                                             )
                                         )
                                         self.status_bar.config(
-                                            text=f"📋 Auto-caught direct link: {item.filename[:45]}"
+                                            text=f"📋 Direct link received: {item.filename[:45]}"
                                         )
                                         self.manager.start_next_downloads(self._on_item_update)
+
+                                    if getattr(self, "auto_grab_active", False):
+                                        self.root.after(3000, self._open_next_auto_link)
                             else:
-                                # It's a webpage link: put into text box for batch open, DO NOT put into download queue!
                                 existing_text = self.txt_links.get("1.0", tk.END).strip()
                                 if clip not in existing_text:
                                     self.txt_links.insert(tk.END, clip + "\n")
                                     self.status_bar.config(
-                                        text=f"📋 DataNodes webpage link added to text box. Click 'Auto-Open in Browser' to resolve."
+                                        text=f"📋 DataNodes webpage link added to text box."
                                     )
             except Exception:
                 pass
