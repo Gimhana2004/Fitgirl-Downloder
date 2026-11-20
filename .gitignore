@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+cookies.txt
+dist/
+build/
+*.spec
+downloads_state.json
+*.bin

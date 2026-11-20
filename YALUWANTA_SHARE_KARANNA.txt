@@ -1,0 +1,45 @@
+============================================================
+🎮 FitGirl Multi-Part Downloader (Windows Guide)
+============================================================
+
+යාලුවනේ, FitGirl එකේ DataNodes links වලින් Games බාද්දි Parts fail වෙන්නේ නැතුව, 
+Manual click කර කර ඉන්නේ නැතුව Auto Full Speed එකෙන් බාගන්න මේ පියවර 3 කරන්න:
+
+------------------------------------------------------------
+පියවර 1: Downloader Tool එක Open කරගන්න
+------------------------------------------------------------
+- "FitGirlDownloader.exe" එක Double Click කරලා Open කරගන්න.
+- (කිසිම දෙයක් Install කරන්න ඕන නෑ, නිකන්ම Run වෙනවා!)
+- Save Folder එක විදියට Game එක බාගන්න ඕන තැන තෝරගන්න.
+
+------------------------------------------------------------
+පියවර 2: Chrome / Edge / Brave එකට Auto-Clicker එක දාගන්න (විනාඩියයි යන්නේ)
+------------------------------------------------------------
+1. Chrome හෝ Edge Web Store එකෙන් "Tampermonkey" (Free) දාගන්න:
+   Chrome / Edge Link: https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo
+
+2. Tampermonkey icon එක click කරලා "Create a new script" යන්න.
+3. එතන තියෙන code ඔක්කොම මකලා, "AutoClicker_Script.txt" එකේ තියෙන code එක 
+   සම්පූර්ණයෙන්ම Paste කරලා File -> Save (Ctrl + S) කරන්න.
+
+------------------------------------------------------------
+පියවර 3: දැන් Game එක බාන්න!
+------------------------------------------------------------
+- FitGirl එකේ තියෙන DataNodes links (Part 01, Part 02, etc.) Browser එකෙන් Open කරන්න.
+- එච්චරයි! 
+  * Step 1 "Continue to Download" එක Auto Click වෙනවා.
+  * Step 2 "Free Download" එක Auto Click වෙනවා.
+  * Direct Link එක Auto Tool එකට ඇවිත් බාන්න පටන් ගන්නවා!
+
+------------------------------------------------------------
+⚡ දවස් ගානක් PC එක Off කර කර බාන්නේ කොහොමද? (Multi-Day Resume)
+------------------------------------------------------------
+- රෑට PC එක Off කරන්න ඕන උනාම, Tool එකේ "Pause All" ඔබලා Tool එක Close කරන්න (නැත්නම් නිකන්ම PC එක Shutdown කරන්න).
+- පහුවදා ආයෙත් PC එක On කරලා Tool එක Open කරාම:
+  * ඊයේ බාපු Progress එක, Files list එක එහෙමම Restore වෙනවා!
+  * "Start / Resume All" එබුවම ඊයේ නැවතුන MB ගානෙ ඉඳන්ම ආයෙත් බාන්න පටන් ගන්නවා (0% වෙන්නේ නෑ!).
+
+💡 Link Expired උනොත් (දවස් 2-3 කට පස්සේ):
+- DataNodes direct links පැය 24කට පස්සේ expire වෙන්න පුළුවන්. එහෙම උනොත් Status එකේ "Link Expired" කියලා වැටෙයි.
+- එතකොට ඒ Part එක උඩ Right-click කරලා "🔄 Refresh / Update Expired Link" දීලා, Browser එකෙන් අලුත් link එක දුන්නම, බාපු progress එක නැති නොවී එතනින්ම ඉතුරු ටික බානවා!
+============================================================
